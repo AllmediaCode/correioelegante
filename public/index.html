@@ -107,6 +107,14 @@
     .lang-switch{ top:10px; right:10px; }
     .lang-switch button{ padding:5px 10px; font-size:12px; }
   }
+.search-input{
+  width:100%;border:1.5px solid var(--border);border-radius:10px;
+  padding:.55rem .9rem;font-family:'DM Sans',sans-serif;font-size:.85rem;
+  background:#fff;color:var(--dark);outline:none;transition:border-color .2s;
+  margin-bottom:.4rem;
+}
+.search-input:focus{border-color:var(--gold)}
+.search-input::placeholder{color:#b0a090}
 </style>
 </head>
 <body>
@@ -530,40 +538,97 @@ function fillSelect(sel){
   const o = document.createElement("option");
   o.value = "__other__"; o.textContent = t("optOther");
   sel.appendChild(o);
+
+  // Insere campo de busca antes do select se ainda não existir
+  const which = sel === fromSelect ? 'from' : 'to';
+  const existingSearch = document.getElementById('search-' + which);
+  if (!existingSearch && sel.parentElement) {
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.id = 'search-' + which;
+    inp.className = 'search-input';
+    inp.placeholder = '🔍 Buscar...';
+    inp.setAttribute('autocomplete', 'off');
+    inp.addEventListener('input', function(){ filterSelect(which); });
+    sel.parentElement.insertBefore(inp, sel);
+  }
 }
 function refreshSelects(){
   fillSelect(fromSelect);
   fillSelect(toSelect);
   teamList.value = TEAM.join("\n");
+  // Atualiza buscas se já tiver algo digitado
+  if (document.getElementById('search-from')) filterSelect('from');
+  if (document.getElementById('search-to'))   filterSelect('to');
+}
+
+function filterSelect(which){
+  const input = document.getElementById('search-' + which);
+  const sel   = which === 'from' ? fromSelect : toSelect;
+  if (!input || !sel) return;
+  const q = input.value.toLowerCase().trim();
+  Array.from(sel.options).forEach(function(opt){
+    if (opt.value === '__other__' || opt.value === '') {
+      opt.hidden = false;
+      return;
+    }
+    opt.hidden = q.length > 0 && !opt.textContent.toLowerCase().includes(q);
+  });
 }
 // Tenta carregar membros reais do servidor Discord via backend.
 // Se o backend estiver offline, usa a lista hardcoded normalmente.
-async function loadMembersFromDiscord(){
+let _membrosPolling = null;
+
+function setSelectsLoading(msg){
   [fromSelect, toSelect].forEach(sel => {
-    sel.innerHTML = '<option value="">⏳ Carregando membros do servidor...</option>';
+    sel.innerHTML = '<option value="">' + msg + '</option>';
     sel.disabled = true;
   });
-  try{
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(DISCORD_BACKEND + "/membros", { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const membros = await res.json();
-    if (!Array.isArray(membros) || !membros.length) throw new Error("lista vazia");
-    TEAM = membros.map(m => m.displayName + " | @" + m.username);
-    console.log("✅ " + TEAM.length + " membros carregados do Discord");
-    [fromSelect, toSelect].forEach(sel => { sel.disabled = false; });
-    refreshSelects();
-    if (typeof draw === "function") draw();
-  }catch(e){
-    console.error("Erro ao carregar membros:", e.message);
-    [fromSelect, toSelect].forEach(sel => {
-      sel.innerHTML = '<option value="">❌ Servidor offline — rode npm start</option>';
-      sel.disabled = true;
-    });
-    showToast("❌ Backend offline. Rode: npm start");
+}
+
+async function loadMembersFromDiscord(){
+  setSelectsLoading("⏳ Conectando ao servidor...");
+  if (_membrosPolling) clearInterval(_membrosPolling);
+
+  async function tentar(){
+    try{
+      // Checa status do cache no backend
+      const sRes = await fetch(DISCORD_BACKEND + "/status");
+      if (!sRes.ok) throw new Error("backend offline");
+      const { status, total } = await sRes.json();
+
+      if (status === 'carregando' || status === 'aguardando'){
+        setSelectsLoading("⏳ Carregando membros" + (total > 0 ? " (" + total + ")..." : "..."));
+        return; // polling vai tentar de novo
+      }
+
+      if (status === 'erro'){
+        setSelectsLoading("❌ Erro ao carregar — reinicie o servidor");
+        if (_membrosPolling) clearInterval(_membrosPolling);
+        return;
+      }
+
+      // pronto — busca a lista
+      const mRes = await fetch(DISCORD_BACKEND + "/membros");
+      if (!mRes.ok) throw new Error("HTTP " + mRes.status);
+      const membros = await mRes.json();
+      if (!Array.isArray(membros) || !membros.length) throw new Error("lista vazia");
+
+      TEAM = membros.map(function(m){ return m.displayName + " | @" + m.username; });
+      if (_membrosPolling) clearInterval(_membrosPolling);
+      [fromSelect, toSelect].forEach(function(sel){ sel.disabled = false; });
+      refreshSelects();
+      if (typeof draw === "function") draw();
+      console.log("✅ " + TEAM.length + " membros carregados.");
+
+    }catch(e){
+      setSelectsLoading("❌ Backend offline — rode: npm start");
+      if (_membrosPolling) clearInterval(_membrosPolling);
+    }
   }
+
+  tentar();
+  _membrosPolling = setInterval(tentar, 2000); // tenta a cada 2s até ficar pronto
 }
 loadMembersFromDiscord();
 
