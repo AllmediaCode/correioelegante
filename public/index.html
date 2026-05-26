@@ -115,6 +115,31 @@
 }
 .search-input:focus{border-color:var(--gold)}
 .search-input::placeholder{color:#b0a090}
+
+/* ── Searchable dropdown ─────────────────────────────── */
+.sd-wrap{position:relative;width:100%}
+.sd-input{
+  width:100%;border:1.5px solid var(--border);border-radius:10px;
+  padding:.7rem .9rem;font-family:'DM Sans',sans-serif;font-size:.9rem;
+  background:#fff;color:var(--dark);outline:none;transition:border-color .2s;
+  cursor:pointer;
+}
+.sd-input:focus{border-color:var(--gold)}
+.sd-input::placeholder{color:#b0a090}
+.sd-dropdown{
+  display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;
+  background:#fff;border:1.5px solid var(--border);border-radius:10px;
+  max-height:220px;overflow-y:auto;z-index:999;
+  box-shadow:0 8px 24px #0000001a;
+}
+.sd-dropdown.open{display:block}
+.sd-option{
+  padding:.6rem .9rem;font-size:.88rem;cursor:pointer;
+  transition:background .12s;color:var(--dark);
+}
+.sd-option:hover,.sd-option.active{background:#fdf0dc}
+.sd-option.selected{font-weight:600;color:var(--accent)}
+.sd-empty{padding:.7rem .9rem;font-size:.85rem;color:var(--muted);font-style:italic}
 </style>
 </head>
 <body>
@@ -577,6 +602,130 @@ function filterSelect(which){
 }
 // Tenta carregar membros reais do servidor Discord via backend.
 // Se o backend estiver offline, usa a lista hardcoded normalmente.
+
+// ── Searchable Dropdown Component ────────────────────────────────
+function createSearchableSelect(anchorEl, which) {
+  // Remove select nativo e cria componente
+  const wrap = document.createElement('div');
+  wrap.className = 'sd-wrap';
+  wrap.id = 'sd-wrap-' + which;
+  anchorEl.parentNode.insertBefore(wrap, anchorEl);
+  anchorEl.style.display = 'none'; // esconde o select original
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'sd-input';
+  input.id = 'sd-input-' + which;
+  input.setAttribute('autocomplete', 'off');
+  input.placeholder = '🔍 Buscar ou selecionar...';
+  input.readOnly = false;
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'sd-dropdown';
+  dropdown.id = 'sd-dropdown-' + which;
+
+  wrap.appendChild(input);
+  wrap.appendChild(dropdown);
+
+  let selectedValue = '';
+  let selectedLabel = '';
+
+  function getOptions() {
+    return TEAM.map(function(line) {
+      const { name, handle } = parseEntry(line);
+      return {
+        value: line,
+        label: handle ? name + '  (' + handle + ')' : name
+      };
+    });
+  }
+
+  function renderOptions(query) {
+    const q = (query || '').toLowerCase().trim();
+    const opts = getOptions().filter(function(o) {
+      return !q || o.label.toLowerCase().includes(q);
+    });
+    dropdown.innerHTML = '';
+    if (!opts.length) {
+      dropdown.innerHTML = '<div class="sd-empty">Nenhum resultado encontrado</div>';
+      return;
+    }
+    opts.forEach(function(o) {
+      const div = document.createElement('div');
+      div.className = 'sd-option' + (o.value === selectedValue ? ' selected' : '');
+      div.textContent = o.label;
+      div.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        selectedValue = o.value;
+        selectedLabel = o.label;
+        input.value = o.label;
+        // Sincroniza com o select original
+        anchorEl.value = o.value;
+        anchorEl.dispatchEvent(new Event('change'));
+        closeDropdown();
+      });
+      dropdown.appendChild(div);
+    });
+  }
+
+  function openDropdown() {
+    renderOptions(input.value === selectedLabel ? '' : input.value);
+    dropdown.classList.add('open');
+  }
+
+  function closeDropdown() {
+    dropdown.classList.remove('open');
+    // Se nada foi selecionado, restaura label anterior
+    if (!selectedValue) input.value = '';
+    else input.value = selectedLabel;
+  }
+
+  input.addEventListener('focus', function() {
+    input.select();
+    openDropdown();
+  });
+
+  input.addEventListener('input', function() {
+    selectedValue = '';
+    selectedLabel = '';
+    anchorEl.value = '';
+    renderOptions(input.value);
+    dropdown.classList.add('open');
+  });
+
+  input.addEventListener('blur', function() {
+    setTimeout(closeDropdown, 150);
+  });
+
+  // API pública para re-popular quando TEAM mudar
+  wrap._refresh = function() {
+    selectedValue = '';
+    selectedLabel = '';
+    input.value = '';
+    anchorEl.value = '';
+    renderOptions('');
+  };
+}
+
+// Inicializa os dois dropdowns customizados (chamado após DOM pronto)
+let _sdInitialized = false;
+function initSearchableSelects() {
+  if (_sdInitialized) return;
+  _sdInitialized = true;
+  createSearchableSelect(fromSelect, 'from');
+  createSearchableSelect(toSelect,   'to');
+}
+
+// Sobrescreve refreshSelects para também atualizar os dropdowns
+const _origRefreshSelects = refreshSelects;
+function refreshSelects() {
+  _origRefreshSelects();
+  const wf = document.getElementById('sd-wrap-from');
+  const wt = document.getElementById('sd-wrap-to');
+  if (wf && wf._refresh) wf._refresh();
+  if (wt && wt._refresh) wt._refresh();
+}
+
 let _membrosPolling = null;
 
 function setSelectsLoading(msg){
@@ -1434,8 +1583,7 @@ const bakeBtn = document.getElementById("bake-html");
 if (bakeBtn) bakeBtn.addEventListener("click", bakeAllAndDownload);
 
 document.fonts.ready.then(()=>{
-  // Selects são populados pelo loadMembersFromDiscord (assíncrono)
-  // O draw() é chamado dentro do finally do loadMembersFromDiscord
+  initSearchableSelects();
   if (TEAM.length) draw();
 });
 </script>
