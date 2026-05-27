@@ -661,8 +661,22 @@ function createSearchableSelect(anchorEl, which) {
         selectedValue = o.value;
         selectedLabel = o.label;
         input.value = o.label;
-        // Sincroniza com o select original
-        anchorEl.value = o.value;
+        // Sincroniza com o select original — garante que o option existe
+        let found = false;
+        for (let i = 0; i < anchorEl.options.length; i++) {
+          if (anchorEl.options[i].value === o.value) {
+            anchorEl.selectedIndex = i;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.textContent = o.label;
+          anchorEl.appendChild(opt);
+          anchorEl.value = o.value;
+        }
         anchorEl.dispatchEvent(new Event('change'));
         closeDropdown();
       });
